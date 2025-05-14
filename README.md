@@ -13,3 +13,11 @@ A real-time system that translates sign-language hand gestures into spoken words
 - **Tkinter GUI** for live video feed and sentence display  
 
 ---
+
+## Setup instructions
+
+**Python version used:**
+3.12.9
+
+**To setup create a virtual environment then install requirements.txt**
+
