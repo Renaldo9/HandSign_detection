@@ -2,15 +2,20 @@ import cv2
 import numpy as np
 import mediapipe as mp
 import os
+import sys
 from datetime import datetime
 
-# Parameters
-GESTURE_NAME = "hello"           # <-- Change this per gesture
-SEQUENCE_LENGTH = 30                # Frames per gesture
-SAVE_DIR = f"dataset/{GESTURE_NAME}"
+# If gesture name was passed via arguments, use it. Otherwise, prompt the user.
+if len(sys.argv) > 1:
+    GESTURE_NAME = sys.argv[1].strip().lower()
+else:
+    GESTURE_NAME = input("Enter the gesture name: ").strip().lower()
+
+SEQUENCE_LENGTH = 30
+SAVE_DIR = os.path.join("dataset", GESTURE_NAME)
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Initialize MediaPipe for two-hand detection
+# Initialize MediaPipe for hand tracking
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
@@ -21,17 +26,24 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.5
 )
 
-# Start video capture
+# Start video capture from default camera
 cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    print("[ERROR] Failed to open camera.")
+    sys.exit(1)
+
 sequence = []
 collecting = False
 
+print(f"[INFO] Recording gesture: {GESTURE_NAME}")
 print("[INFO] Press 's' to start recording a sequence.")
 print("[INFO] Press 'q' to quit.")
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
+        print("[ERROR] Failed to grab frame")
         break
 
     # Flip and convert color for MediaPipe
@@ -43,7 +55,7 @@ while cap.isOpened():
     frame_features = []
 
     if results.multi_hand_landmarks:
-        # Sort hands by x-coordinate of wrist to get consistent left-right order
+        # Sort hands by x-coordinate of wrist to get consistant left-right order
         sorted_hands = sorted(
             results.multi_hand_landmarks,
             key=lambda hl: hl.landmark[0].x
@@ -55,11 +67,11 @@ while cap.isOpened():
             for lm in hl.landmark:
                 frame_features.extend([lm.x, lm.y, lm.z])
 
-    # Pad to ensure fixed size of 126 values (2 hands × 21 landmarks × 3 coords)
+    # Pad to ensure fixed size of 126 values (2 hands x 21 landmarks x 3 coords)
     while len(frame_features) < 126:
         frame_features.extend([0.0, 0.0, 0.0])
 
-    # If somehow we have extra (e.g., more than 2 hands), trim to 126
+    # Id somehow we have extra (e.g., more than 2 hands), trim to 126
     frame_features = frame_features[:126]
 
     # Recording
@@ -71,13 +83,11 @@ while cap.isOpened():
         if len(sequence) == SEQUENCE_LENGTH:
             # Check for consistency
             if any(len(f) != 126 for f in sequence):
-                print("[ERROR] Inconsistent frame feature lengths:")
-                for i, f in enumerate(sequence):
-                    print(f" Frame {i}: length = {len(f)}")
+                print("[ERROR] Inconsistent frame feature lengths")
                 sequence = []
                 collecting = False
                 continue
-
+            
             # Save sequence
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{GESTURE_NAME}_{timestamp}.npy"
