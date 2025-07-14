@@ -8,7 +8,7 @@ from collections import defaultdict
 DATASET_DIR = "dataset"
 EXPECTED_FRAMES = 30
 EXPECTED_FEATURES = 126
-MOVE_CORRUPT_TO = os.path.join(DATASET_DIR, "_corrupted")
+MOVE_CORRUPT_TO = "_corrupted"
 os.makedirs(MOVE_CORRUPT_TO, exist_ok=True)
 
 # Helper Functions
