@@ -72,7 +72,7 @@ class RecorderApp:
             return
 
         self.gesture_name = gesture_name
-        os.makedirs(os.path.join("dataset", self.gesture_name), exist_ok=True)
+        os.makedirs(os.path.join("Backend","dataset", self.gesture_name), exist_ok=True)
         self.sequence_length = self.length_var.get()
         self.update_sample_counter()
 
