@@ -13,8 +13,8 @@ import pyttsx3
 # -----------------------
 # Load Model and Encoder
 # -----------------------
-MODEL_PATH = 'artifacts/best_gesture_model.h5'
-LABEL_ENCODER_PATH = 'artifacts/label_encoder.pkl'
+MODEL_PATH = 'Backend/artifacts/best_gesture_model.h5'
+LABEL_ENCODER_PATH = 'Backend/artifacts/label_encoder.pkl'
 
 model = tf.keras.models.load_model(MODEL_PATH)
 with open(LABEL_ENCODER_PATH, 'rb') as f:
