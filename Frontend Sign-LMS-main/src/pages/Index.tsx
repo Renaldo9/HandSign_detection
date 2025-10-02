@@ -5,7 +5,7 @@ import { Dashboard } from "@/components/Dashboard";
 import { LearningScreen } from "@/components/LearningScreen";
 import { Dictionary } from "@/components/Dictionary";
 import { Profile } from "@/components/Profile";
-import { PracticeSession } from "@/components/PracticeSession";
+import { DetectionSession  } from "@/components/PracticeSession";
 import { BottomNavigation } from "@/components/BottomNavigation";
 
 import { UserDashboard } from '@/components/UserDashboard';
@@ -47,7 +47,7 @@ const Index = () => {
       case "learn":
         return <LearningScreen />;
       case "practice":
-        return <PracticeSession />;
+        return <DetectionSession  />;
       case "dictionary":
         return <Dictionary />;
       case "profile":
