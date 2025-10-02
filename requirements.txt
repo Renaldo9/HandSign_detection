@@ -5,3 +5,5 @@ scikit-learn
 tensorflow
 Pillow
 pyttsx3
+Flask
+flask-cors
