@@ -1,69 +1,51 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Camera, CameraOff, Play, Square, RotateCcw } from 'lucide-react';
+import { Camera, CameraOff } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { useUserStats } from '@/hooks/useUserStats';
 
 // MediaPipe + helpers
 import { Hands, HAND_CONNECTIONS } from '@mediapipe/hands';
 import { Camera as MpCamera } from '@mediapipe/camera_utils';
 import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils/drawing_utils.js';
 
-const practiceWords = [
-  { word: "Hello", instruction: "Wave your hand in greeting" },
-  { word: "Thank You", instruction: "Touch your chin and move hand forward" },
-  { word: "Please", instruction: "Place hand on chest and move in circular motion" },
-  { word: "Sorry", instruction: "Make a fist and rub it on your chest in circular motion" },
-  { word: "Water", instruction: "Make 'W' with three fingers and tap your chin" },
-  { word: "Help", instruction: "Place one hand on the other and lift both up" },
-  { word: "Yes", instruction: "Make a fist and nod it up and down" },
-  { word: "No", instruction: "Extend index and middle finger and close them" }
-];
-
 const SEQ_LEN = 30;
 const SEND_THROTTLE_MS = 900;
 const BACKEND_URL = "http://127.0.0.1:5000/predict";
+const CONFIDENCE_THRESHOLD = 50; // Hardcoded threshold (matching detection.py default)
 
-export const PracticeSession = () => {
+export const DetectionSession = () => {
   const { toast } = useToast();
-  const { updateLearningSession } = useUserStats();
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const predictionRef = useRef<HTMLDivElement>(null);
 
-  const [isRecording, setIsRecording] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
-  const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [score, setScore] = useState(0);
-  const [sessionStarted, setSessionStarted] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(10);
-  const [isProcessing, setIsProcessing] = useState(false);
-
-  const currentWord = practiceWords[currentWordIndex];
-  const totalWords = practiceWords.length;
-  const progress = ((currentWordIndex) / totalWords) * 100;
+  const [lastSpokenLabel, setLastSpokenLabel] = useState<string | null>(null);
 
   // Buffer + send control
   let seqBuffer: number[][] = [];
   let lastSent = 0;
   let sending = false;
-  let lastSpoken: string | null = null;
 
-  // Countdown timer
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (sessionStarted && timeLeft > 0 && !isProcessing) {
-      timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-    } else if (timeLeft === 0 && sessionStarted) {
-      handleTimeUp();
+  // TTS function using Web Speech API
+  const speak = (text: string) => {
+    if ('speechSynthesis' in window) {
+      // Cancel any ongoing speech to prioritize new predictions
+      speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US'; // Set language to English (adjust if needed)
+      utterance.volume = 1; // Full volume
+      utterance.rate = 0.8; // Slightly slower for clarity
+      utterance.pitch = 1; // Default pitch
+      speechSynthesis.speak(utterance);
+    } else {
+      console.warn('Text-to-Speech not supported in this browser.');
+      toast({ title: "TTS Warning", description: "Your browser does not support text-to-speech.", variant: "destructive" });
     }
-    return () => clearTimeout(timer);
-  }, [timeLeft, sessionStarted, isProcessing]);
+  };
 
   // Initialize MediaPipe once
   useEffect(() => {
@@ -165,22 +147,20 @@ export const PracticeSession = () => {
         const label = data.label;
         const conf = data.confidence;
 
-        if (predictionRef.current) {
-          predictionRef.current.innerHTML = `Prediction: <strong>${label}</strong> (${conf.toFixed(1)}%)`;
-        }
-
-        // Mark correct if matches current word
-        if (label === currentWord.word && conf > 50) {
-          setScore((prev) => prev + 1);
-          toast({
-            title: "Correct!",
-            description: `Great job signing "${currentWord.word}"!`,
-          });
-          if (currentWordIndex < totalWords - 1) {
-            setCurrentWordIndex((prev) => prev + 1);
-            setTimeLeft(10);
-          } else {
-            endSession();
+        // Only display and speak if confidence meets threshold
+        if (conf >= CONFIDENCE_THRESHOLD) {
+          if (predictionRef.current) {
+            predictionRef.current.innerHTML = `Prediction: <strong>${label}</strong> (${conf.toFixed(1)}%)`;
+          }
+          // Speak only if it's a new label (to avoid repetition)
+          if (label !== lastSpokenLabel) {
+            speak(label);
+            setLastSpokenLabel(label);
+          }
+        } else {
+          // Optionally clear or show low confidence
+          if (predictionRef.current) {
+            predictionRef.current.innerHTML = `Low Confidence: ${conf.toFixed(1)}% (threshold: ${CONFIDENCE_THRESHOLD}%)`;
           }
         }
       } catch (err) {
@@ -191,13 +171,14 @@ export const PracticeSession = () => {
       }
     }
 
-  }, [cameraActive, sessionStarted]); // re-init when session starts
+  }, [cameraActive, lastSpokenLabel]); // Re-run effect if lastSpokenLabel changes (though unlikely needed)
 
   const startCamera = async () => {
     try {
       await navigator.mediaDevices.getUserMedia({ video: true });
       setCameraActive(true);
-      toast({ title: "Camera Activated", description: "You should see your camera feed now." });
+      setLastSpokenLabel(null); // Reset spoken label on start
+      toast({ title: "Camera Activated", description: "You should see your camera feed now. Perform a sign to hear it spoken." });
     } catch (error) {
       toast({ title: "Camera Error", description: "Unable to access camera.", variant: "destructive" });
     }
@@ -205,47 +186,12 @@ export const PracticeSession = () => {
 
   const stopCamera = () => {
     setCameraActive(false);
-    setSessionStarted(false);
-    setIsRecording(false);
-  };
-
-  const startSession = () => {
-    if (!cameraActive) {
-      toast({ title: "Camera Required", description: "Please activate your camera first", variant: "destructive" });
-      return;
-    }
-    setSessionStarted(true);
-    setTimeLeft(10);
-    setCurrentWordIndex(0);
-    setScore(0);
-  };
-
-  const handleTimeUp = () => {
-    toast({ title: "Time's Up!", description: "Moving to the next word.", variant: "destructive" });
-    if (currentWordIndex < totalWords - 1) {
-      setCurrentWordIndex((prev) => prev + 1);
-      setTimeLeft(10);
-    } else {
-      endSession();
+    setLastSpokenLabel(null);
+    // Cancel any ongoing speech
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel();
     }
   };
-
-  const endSession = async () => {
-    setSessionStarted(false);
-    const accuracy = Math.round((score / totalWords) * 100);
-    await updateLearningSession(score, 15, accuracy);
-    toast({ title: "Session Complete!", description: `Final Score: ${score}/${totalWords} (${accuracy}% accuracy)` });
-  };
-
-  const resetSession = () => {
-    setCurrentWordIndex(0);
-    setScore(0);
-    setTimeLeft(10);
-    setSessionStarted(false);
-    setIsProcessing(false);
-  };
-
-  // ============ UI RENDER ============
 
   if (!cameraActive) {
     return (
@@ -253,9 +199,9 @@ export const PracticeSession = () => {
         <div className="max-w-2xl mx-auto pt-8">
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent mb-4">
-              Practice Session
+              Hand Sign Detection
             </h1>
-            <p className="text-muted-foreground text-lg">Test your sign language skills with live gesture detection</p>
+            <p className="text-muted-foreground text-lg">Detect sign language gestures in real-time with spoken feedback</p>
           </div>
           <Card className="p-8 text-center space-y-6">
             <div className="w-24 h-24 mx-auto bg-gradient-to-br from-primary/20 to-secondary/20 rounded-full flex items-center justify-center">
@@ -270,40 +216,29 @@ export const PracticeSession = () => {
     );
   }
 
-  if (cameraActive && !sessionStarted) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-background to-muted p-4">
-        <div className="max-w-4xl mx-auto pt-4">
-          <div className="text-center mb-6">
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent mb-2">
-              Camera Ready
-            </h1>
-          </div>
-          <Card className="p-6">
-            <div className="relative aspect-video bg-black rounded-lg overflow-hidden mb-6">
-              <video ref={videoRef} autoPlay playsInline muted className="hidden" />
-              <canvas ref={canvasRef} className="w-full h-full object-cover" />
-            </div>
-            <div ref={statusRef} className="text-sm text-gray-400 mb-2">Status: idle</div>
-            <div ref={predictionRef} className="text-sm text-gray-200">Prediction: ...</div>
-            <Button onClick={startSession} size="lg" className="px-8">
-              <Play className="mr-2" size={20} /> Start Practice Session
-            </Button>
-            <Button variant="outline" onClick={stopCamera} size="lg">
-              <CameraOff className="mr-2" size={20} /> Stop Camera
-            </Button>
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="fixed inset-0 bg-black z-50">
-      <div className="relative h-full">
-        <video ref={videoRef} autoPlay playsInline muted className="hidden" />
-        <canvas ref={canvasRef} className="w-full h-full object-cover" />
-        {/* overlays unchanged ... */}
+    <div className="min-h-screen bg-gradient-to-br from-background to-muted p-4">
+      <div className="max-w-4xl mx-auto pt-4">
+        <div className="text-center mb-6">
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent mb-2">
+            Detection Active
+          </h1>
+          <p className="text-muted-foreground">Perform a sign language gesture to see and hear the prediction.</p>
+        </div>
+        <Card className="p-6">
+          <div className="relative aspect-video bg-black rounded-lg overflow-hidden mb-6">
+            <video ref={videoRef} autoPlay playsInline muted className="hidden" />
+            <canvas ref={canvasRef} className="w-full h-full object-cover" />
+          </div>
+          <div ref={statusRef} className="text-sm text-gray-400 mb-2">Status: idle</div>
+          <div ref={predictionRef} className="text-sm text-gray-200 mb-4 font-semibold">Prediction: ...</div>
+          <Button variant="outline" onClick={stopCamera} size="lg">
+            <CameraOff className="mr-2" size={20} /> Stop Camera
+          </Button>
+        </Card>
+        <div className="mt-4 text-center text-sm text-muted-foreground">
+          <p>Threshold: {CONFIDENCE_THRESHOLD}% | Last Spoken: {lastSpokenLabel || 'None'}</p>
+        </div>
       </div>
     </div>
   );
