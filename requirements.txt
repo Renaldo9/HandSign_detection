@@ -7,3 +7,4 @@ Pillow
 pyttsx3
 Flask
 flask-cors
+waitress

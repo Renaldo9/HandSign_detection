@@ -79,7 +79,7 @@ export const DetectionSession = () => {
       if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return null;
       const handsArr = results.multiHandLandmarks.map((h: any) => h.slice());
       handsArr.sort((a: any, b: any) => (1 - a[0].x) - (1 - b[0].x));
-      let features: number[] = [];
+      const features: number[] = [];
       for (let i = 0; i < Math.min(2, handsArr.length); i++) {
         for (const lm of handsArr[i]) {
           features.push(1 - lm.x, lm.y, lm.z);
@@ -90,6 +90,10 @@ export const DetectionSession = () => {
       }
       return features.slice(0, 126);
     }
+
+    let lastValidFrame: number[] | null = null;
+    let missingFrameCount = 0;
+    const MAX_MISSING_FRAMES = 7;
 
     function onResults(results: any) {
       const canvasEl = canvasRef.current!;
@@ -104,7 +108,7 @@ export const DetectionSession = () => {
       ctx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
       ctx.restore();
 
-      // Landmarks
+      // Draw landmarks if detected
       if (results.multiHandLandmarks) {
         ctx.save();
         ctx.translate(canvasEl.width, 0);
@@ -116,17 +120,33 @@ export const DetectionSession = () => {
         ctx.restore();
       }
 
+      // Build features or handle missing
       const frameFeatures = buildFeatures(results);
-      if (!frameFeatures) {
+
+      if (frameFeatures) {
+        lastValidFrame = frameFeatures;
+        missingFrameCount = 0;
+        seqBuffer.push(frameFeatures);
+      } else if (lastValidFrame && missingFrameCount < MAX_MISSING_FRAMES) {
+        // If lost tracking briefly, reuse last frame to maintain continuity
+        seqBuffer.push(lastValidFrame);
+        missingFrameCount++;
+      } else {
+        // Only reset if lost tracking for too long
         seqBuffer = [];
+        lastValidFrame = null;
+        missingFrameCount = 0;
         if (statusRef.current) statusRef.current.textContent = "Status: waiting for hands...";
         return;
       }
 
-      seqBuffer.push(frameFeatures);
+      // Maintain sequence length
       if (seqBuffer.length > SEQ_LEN) seqBuffer.shift();
-      if (statusRef.current) statusRef.current.textContent = `Status: ${seqBuffer.length}/${SEQ_LEN} frames`;
 
+      if (statusRef.current)
+        statusRef.current.textContent = `Status: ${seqBuffer.length}/${SEQ_LEN} frames`;
+
+      // Send when sequence full
       if (seqBuffer.length === SEQ_LEN) {
         maybeSendSequence(seqBuffer);
       }
@@ -163,6 +183,7 @@ export const DetectionSession = () => {
             predictionRef.current.innerHTML = `Low Confidence: ${conf.toFixed(1)}% (threshold: ${CONFIDENCE_THRESHOLD}%)`;
           }
         }
+        seqBuffer = []; // Clear buffer after sending
       } catch (err) {
         console.error("Fetch error:", err);
       } finally {
@@ -171,7 +192,12 @@ export const DetectionSession = () => {
       }
     }
 
-  }, [cameraActive, lastSpokenLabel]); // Re-run effect if lastSpokenLabel changes (though unlikely needed)
+    // Cleanup on unmount or re-run
+    return () => {
+      camera.stop();
+      hands.close();
+    };
+  }, [cameraActive]); // Removed lastSpokenLabel from dependencies
 
   const startCamera = async () => {
     try {

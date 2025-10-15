@@ -1,3 +1,6 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 from flask import Flask, request, jsonify
 import tensorflow as tf
 import numpy as np
@@ -5,9 +8,8 @@ import pickle
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests from React
+CORS(app)
 
-# Load the same model and encoder as in detection.py
 MODEL_PATH = 'Backend/artifacts/best_gesture_model.h5'
 LABEL_ENCODER_PATH = 'Backend/artifacts/label_encoder.pkl'
 
@@ -15,15 +17,23 @@ model = tf.keras.models.load_model(MODEL_PATH)
 with open(LABEL_ENCODER_PATH, 'rb') as f:
     le = pickle.load(f)
 
+# Warm-up
+dummy = np.zeros((1, 30, 126), dtype=np.float32)
+_ = model.predict(dummy)
+
+@tf.function
+def fast_predict(input_data):
+    return model(input_data, training=False)
+
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
         data = request.get_json()
-        features = np.array(data['features'])  # Expected shape: (30, 126)
+        features = np.array(data['features'], dtype=np.float32)
         if features.shape != (30, 126):
             return jsonify({'error': 'Invalid feature shape'}), 400
-        input_data = np.expand_dims(features, axis=0)  # Shape: (1, 30, 126)
-        preds = model.predict(input_data)[0]
+        input_data = np.expand_dims(features, axis=0)
+        preds = fast_predict(input_data)[0].numpy()
         idx = np.argmax(preds)
         label = le.inverse_transform([idx])[0]
         confidence = preds[idx] * 100
